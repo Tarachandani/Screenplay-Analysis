@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MovieBench Script Chunk Viewer</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2em; background: #f8f8f8; }
+      #container { max-width: 900px; margin: auto; background: #fff; padding: 2em; border-radius: 10px; box-shadow: 0 2px 8px #ccc; }
+      #scriptViewer { margin-top: 1.5em; background: #222; color: #f8f8f8; padding: 1em; border-radius: 8px; min-height: 120px; font-size: 1.1em; white-space: pre-wrap; }
+      label { font-weight: bold; }
+      #csvStatus { color: #007a00; margin-left: 1em; }
+      #video { width: 100%; max-width: 700px; display: block; margin: 1em 0; }
+      #controls { margin-bottom: 1em; }
+    </style>
+    <!-- PapaParse CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  </head>
+  <body>
+    <div id="container">
+      <h2>MovieBench Script Chunk Viewer</h2>
+      <div id="controls">
+        <label for="videoFile">Select Video File:</label>
+        <input type="file" id="videoFile" accept="video/*"><br><br>
+        <label for="csvFile">Upload Mapping CSV:</label>
+        <input type="file" id="csvFile" accept=".csv">
+        <span id="csvStatus"></span>
+      </div>
+      <video id="video" controls></video>
+      <div id="scriptViewer"><em>Upload a mapping CSV and play the video to see script chunks here.</em></div>
+    </div>
+    <script>
+      const video = document.getElementById('video');
+      const videoFileInput = document.getElementById('videoFile');
+      const csvFileInput = document.getElementById('csvFile');
+      const scriptViewer = document.getElementById('scriptViewer');
+      const csvStatus = document.getElementById('csvStatus');
+
+      let mapping = []; // Array of {start, end, matched_chunk_text}
+      let lastShownEntry = null; // Track the last shown entry
+
+      // Handle video file selection
+      videoFileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          video.src = URL.createObjectURL(file);
+          video.load();
+        }
+      });
+
+      // Handle CSV upload and parse
+      csvFileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: function(results) {
+            mapping = results.data.map(row => ({
+              // Clean up start/end fields: trim spaces and remove leading/trailing quotes
+              start: (row.start || '').trim().replace(/^"|"$/g, ''),
+              end: (row.end || '').trim().replace(/^"|"$/g, ''),
+              matched_chunk_text: row.matched_chunk_text
+            }));
+            console.log('Parsed mapping:', mapping.slice(0, 5)); // Debug: log first 5 entries
+            csvStatus.textContent = "Mapping loaded!";
+            scriptViewer.innerHTML = "<em>Mapping loaded. Play the video to see script chunks.</em>";
+          },
+          error: function(err) {
+            csvStatus.textContent = "Error loading CSV!";
+            scriptViewer.innerHTML = "<em>Error parsing CSV file.</em>";
+          }
+        });
+      });
+
+      // Convert SRT time (e.g. "00:01:23,000") to seconds
+      function srtToSec(s) {
+        if (!s) return 0;
+        const [h, m, rest] = s.split(':');
+        const [sec, ms] = rest.split(',');
+        return (+h)*3600 + (+m)*60 + (+sec) + (+ms)/1000;
+      }
+
+      // On video time update, show the mapped script chunk
+      video.addEventListener('timeupdate', () => {
+        if (!mapping.length) return;
+        const t = video.currentTime;
+        // Debug: log current time
+        // console.log('Current time:', t);
+
+        // Find the mapping entry whose start <= t < end
+        let entry = mapping.find(row => {
+          return srtToSec(row.start) <= t && t < srtToSec(row.end);
+        });
+
+        // If not found, find the last entry whose start <= t
+        if (!entry) {
+          // Find all entries whose start is <= t
+          let candidates = mapping.filter(row => srtToSec(row.start) <= t);
+          if (candidates.length > 0) {
+            // Get the one with the latest start time
+            entry = candidates.reduce((a, b) => srtToSec(a.start) > srtToSec(b.start) ? a : b);
+          }
+        }
+
+        if (entry && entry !== lastShownEntry) {
+          scriptViewer.innerHTML = `<pre>${entry.matched_chunk_text}</pre>`;
+          lastShownEntry = entry;
+        } else if (!entry && lastShownEntry !== null) {
+          scriptViewer.innerHTML = "<em>No script chunk mapped for this time.</em>";
+          lastShownEntry = null;
+        }
+      });
+    </script>
+  </body>
+</html>
+
